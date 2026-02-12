@@ -1,77 +1,51 @@
 import SwiftUI
 
-/// Main window layout with tab bar, terminal area, and AI sidebar
+/// Main window layout with terminal area and AI sidebar
 struct MainWindowView: View {
-    @StateObject private var windowViewModel = WindowViewModel()
+    @StateObject private var paneViewModel: PaneViewModel
+    @StateObject private var aiSession: AISession
+    @State private var sidebarVisible: Bool = true
+    
+    init() {
+        let profile = ProfileManager.shared.getDefaultProfile()
+        _paneViewModel = StateObject(wrappedValue: PaneViewModel(profile: profile))
+        _aiSession = StateObject(wrappedValue: AISession(
+            selectedModel: profile.aiModel,
+            systemPromptPreset: profile.aiSystemPromptPreset
+        ))
+    }
     
     var body: some View {
-        VStack(spacing: 0) {
-            // Tab bar at the top
-            TabBarView(windowViewModel: windowViewModel)
+        HSplitView {
+            // Terminal area
+            TerminalViewRepresentable(paneViewModel: paneViewModel)
+                .frame(minWidth: 400)
             
-            Divider()
-            
-            // Main content area
-            HSplitView {
-                // Terminal area
-                SplitPaneView(windowViewModel: windowViewModel)
-                    .frame(minWidth: 400)
-                
-                // AI Sidebar (toggleable)
-                if windowViewModel.sidebarVisible {
-                    if let activePane = windowViewModel.activePane {
-                        AISidebarView(
-                            session: windowViewModel.aiSession,
-                            paneViewModel: activePane
-                        )
-                        .frame(minWidth: 300, idealWidth: 350, maxWidth: 500)
-                        .transition(.move(edge: .trailing))
-                    }
-                }
+            // AI Sidebar (toggleable)
+            if sidebarVisible {
+                AISidebarView(session: aiSession, paneViewModel: paneViewModel)
+                    .frame(minWidth: 300, idealWidth: 350, maxWidth: 500)
+                    .transition(.move(edge: .trailing))
             }
         }
         .frame(minWidth: 800, minHeight: 600)
         .toolbar {
             ToolbarItemGroup(placement: .automatic) {
-                // New Tab button
-                Button(action: {
-                    windowViewModel.createPane()
-                }) {
-                    Label("New Tab", systemImage: "plus")
-                }
-                .help("New Tab (⌘T)")
-                
-                Divider()
-                
-                // Split buttons
-                Button(action: {
-                    windowViewModel.createPane()
-                }) {
-                    Label("Split Horizontal", systemImage: "rectangle.split.2x1")
-                }
-                .help("Split Horizontally (⌘D)")
-                
-                Button(action: {
-                    windowViewModel.createPane()
-                }) {
-                    Label("Split Vertical", systemImage: "rectangle.split.1x2")
-                }
-                .help("Split Vertically (⌘⇧D)")
-                
-                Divider()
-                
                 // Toggle sidebar button
                 Button(action: {
                     withAnimation {
-                        windowViewModel.toggleSidebar()
+                        sidebarVisible.toggle()
                     }
                 }) {
-                    Label("Toggle AI Sidebar", systemImage: windowViewModel.sidebarVisible ? "sidebar.right" : "sidebar.left")
+                    Label("Toggle AI Sidebar", systemImage: sidebarVisible ? "sidebar.right" : "sidebar.left")
                 }
-                .help("Toggle AI Sidebar (⌘⇧B)")
+                .help("Toggle AI Sidebar")
             }
         }
-        .environmentObject(windowViewModel)
+        .onAppear {
+            // Launch the shell when view appears
+            paneViewModel.launchLazily()
+        }
     }
 }
 

@@ -6,22 +6,16 @@ struct SpellCasterApp: App {
     @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
     var body: some Scene {
-        // Use WindowGroup - AppDelegate.createInitialWindow will be called automatically
         WindowGroup {
             MainWindowView()
-                .environmentObject(WindowManager.shared)
         }
         .commands {
+            // Replace default new item with new window (uses native tabs)
             CommandGroup(replacing: .newItem) {
                 Button("New Window") {
-                    WindowManager.shared.createNewWindow()
+                    NSApp.sendAction(#selector(NSApplication.newWindowForTab(_:)), to: nil, from: nil)
                 }
                 .keyboardShortcut("n", modifiers: .command)
-                
-                Button("New Tab") {
-                    WindowManager.shared.createNewTab()
-                }
-                .keyboardShortcut("t", modifiers: .command)
             }
         }
         
