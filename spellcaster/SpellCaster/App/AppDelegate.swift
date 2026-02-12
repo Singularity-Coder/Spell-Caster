@@ -5,6 +5,7 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     // MARK: - Properties
     
     private var windowControllers: [NSWindowController] = []
+    private var hasCreatedWindow = false
     
     // MARK: - Application Lifecycle
     
@@ -15,8 +16,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
         // Set up window management
         setupWindowManagement()
         
-        // Create initial window
-        createInitialWindow()
+        // Note: Window is created automatically by WindowGroup
+        // Additional windows can be created via WindowManager.createNewWindow()
+        hasCreatedWindow = true
     }
     
     func applicationWillTerminate(_ notification: Notification) {

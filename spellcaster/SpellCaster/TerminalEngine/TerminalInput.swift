@@ -31,8 +31,13 @@ struct TerminalInput {
             return encodeAltKey(characters: characters)
         }
         
-        // Regular character input
-        return characters.data(using: .utf8)
+        // Regular character input - always return something for printable characters
+        if !characters.isEmpty {
+            return characters.data(using: .utf8)
+        }
+        
+        // Fallback: try using the keyCode to get something
+        return nil
     }
     
     // MARK: - Special Keys

@@ -120,16 +120,29 @@ class TerminalView: NSView {
     // MARK: - Key Events
     
     override func keyDown(with event: NSEvent) {
+        // Let the callback handle it
         onKeyEvent?(event)
+    }
+    
+    override func keyUp(with event: NSEvent) {
+        // Handle key up if needed
     }
     
     override func flagsChanged(with event: NSEvent) {
         // Handle modifier key changes if needed
     }
     
+    // Allow the view to be focusable
+    override var canBecomeKeyView: Bool {
+        return true
+    }
+    
     // MARK: - Mouse Events
     
     override func mouseDown(with event: NSEvent) {
+        // Make this view the first responder when clicked
+        window?.makeFirstResponder(self)
+        
         let point = convert(event.locationInWindow, from: nil)
         let cellSize = renderer.cellSize
         let row = Int(point.y / cellSize.height)
