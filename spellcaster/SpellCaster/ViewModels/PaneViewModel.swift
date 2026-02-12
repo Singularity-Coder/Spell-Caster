@@ -15,6 +15,10 @@ class PaneViewModel: ObservableObject, Identifiable {
     private let profile: Profile
     private var cancellables = Set<AnyCancellable>()
     
+    // Throttle UI updates
+    private var updateWorkItem: DispatchWorkItem?
+    private let updateQueue = DispatchQueue.main
+    
     // MARK: - Initialization
     
     init(profile: Profile, rows: Int = 24, columns: Int = 80) {
@@ -32,8 +36,11 @@ class PaneViewModel: ObservableObject, Identifiable {
     
     private func setupPTYCallbacks() {
         ptyProcess.onOutput = { [weak self] data in
-            self?.emulator.processData(data)
-            self?.objectWillChange.send()
+            guard let self = self else { return }
+            // Process data on background queue
+            self.emulator.processData(data)
+            // Throttle UI updates to prevent freezing
+            self.scheduleUIUpdate()
         }
         
         ptyProcess.onExit = { [weak self] exitCode in
@@ -44,13 +51,20 @@ class PaneViewModel: ObservableObject, Identifiable {
         }
     }
     
+    private func scheduleUIUpdate() {
+        // Cancel any pending update
+        updateWorkItem?.cancel()
+        
+        // Schedule a new update (throttled to ~60fps)
+        updateWorkItem = DispatchWorkItem { [weak self] in
+            self?.objectWillChange.send()
+        }
+        updateQueue.asyncAfter(deadline: .now() + 0.016, execute: updateWorkItem!)
+    }
+    
     private func setupTerminalStateObservers() {
-        // Observe terminal state changes for redraw
-        terminalState.objectWillChange
-            .sink { [weak self] _ in
-                self?.objectWillChange.send()
-            }
-            .store(in: &cancellables)
+        // Terminal state changes are now handled via scheduleUIUpdate()
+        // No need for separate observer which could cause update loops
     }
     
     // MARK: - Process Management
