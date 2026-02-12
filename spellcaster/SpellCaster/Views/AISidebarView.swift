@@ -6,7 +6,6 @@ struct AISidebarView: View {
     let paneViewModel: PaneViewModel
     @StateObject private var viewModel: AISidebarViewModel
     @State private var inputText: String = ""
-    @State private var showContextInspector: Bool = false
     
     init(session: AISession, paneViewModel: PaneViewModel) {
         self.session = session
@@ -52,46 +51,6 @@ struct AISidebarView: View {
             
             Divider()
             
-            // Prompt preset selector
-            HStack {
-                Text("Preset:")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                
-                Picker("", selection: $session.systemPromptPreset) {
-                    Text("Shell Assistant").tag("shell-assistant")
-                    Text("DevOps").tag("devops")
-                    Text("Python").tag("python")
-                    Text("Git").tag("git")
-                }
-                .pickerStyle(.menu)
-                .font(.caption)
-                
-                Spacer()
-                
-                // Context inspector toggle
-                Button(action: { showContextInspector.toggle() }) {
-                    Image(systemName: showContextInspector ? "info.circle.fill" : "info.circle")
-                }
-                .buttonStyle(.plain)
-                .help("Context Inspector")
-            }
-            .padding(.horizontal)
-            .padding(.vertical, 8)
-            
-            Divider()
-            
-            // Context inspector (collapsible)
-            if showContextInspector {
-                ContextInspectorView(
-                    context: paneViewModel.captureContext(),
-                    toggles: $session.contextToggles
-                )
-                .frame(maxHeight: 200)
-                
-                Divider()
-            }
-            
             // Chat transcript
             ScrollViewReader { proxy in
                 ScrollView {
@@ -116,81 +75,52 @@ struct AISidebarView: View {
             Divider()
             
             // Input area
-            VStack(spacing: 8) {
-                // Context toggles (compact)
-                HStack(spacing: 12) {
-                    ContextToggleButton(
-                        icon: "folder",
-                        isOn: session.contextToggles.includeCurrentDirectory,
-                        action: { session.toggleContext(.currentDirectory) }
-                    )
-                    ContextToggleButton(
-                        icon: "doc.text",
-                        isOn: session.contextToggles.includeRecentOutput,
-                        action: { session.toggleContext(.recentOutput) }
-                    )
-                    ContextToggleButton(
-                        icon: "terminal",
-                        isOn: session.contextToggles.includeLastCommand,
-                        action: { session.toggleContext(.lastCommand) }
-                    )
-                    ContextToggleButton(
-                        icon: "arrow.triangle.branch",
-                        isOn: session.contextToggles.includeGitStatus,
-                        action: { session.toggleContext(.gitStatus) }
-                    )
-                    
-                    Spacer()
-                    
-                    // Attach selection button
-                    Button(action: {
-                        // TODO: Attach terminal selection
-                    }) {
-                        Image(systemName: "paperclip")
-                    }
-                    .buttonStyle(.plain)
-                    .help("Attach Selection")
+            HStack(alignment: .bottom, spacing: 8) {
+                // Attach button (left of input)
+                Button(action: {
+                    // TODO: Attach terminal selection
+                }) {
+                    Image(systemName: "paperclip")
+                        .font(.body)
+                        .foregroundColor(.secondary)
                 }
-                .padding(.horizontal)
-                .padding(.top, 8)
+                .buttonStyle(.plain)
+                .help("Attach Selection")
                 
                 // Input field
-                HStack(alignment: .bottom, spacing: 8) {
-                    TextField("Ask AI...", text: $inputText, axis: .vertical)
-                        .textFieldStyle(.plain)
-                        .padding(8)
-                        .background(Color(NSColor.textBackgroundColor))
-                        .cornerRadius(8)
-                        .lineLimit(1...5)
-                        .onSubmit {
-                            sendMessage()
-                        }
-                    
-                    // Send/Stop button
-                    if viewModel.isProcessing {
-                        Button(action: {
-                            viewModel.cancelStreaming()
-                        }) {
-                            Image(systemName: "stop.circle.fill")
-                                .font(.title2)
-                                .foregroundColor(.red)
-                        }
-                        .buttonStyle(.plain)
-                        .help("Stop Generating")
-                    } else {
-                        Button(action: sendMessage) {
-                            Image(systemName: "paperplane.fill")
-                                .font(.title3)
-                                .foregroundColor(inputText.isEmpty ? .secondary : .accentColor)
-                        }
-                        .buttonStyle(.plain)
-                        .disabled(inputText.isEmpty)
-                        .help("Send Message")
+                TextField("Ask AI...", text: $inputText, axis: .vertical)
+                    .textFieldStyle(.plain)
+                    .padding(8)
+                    .background(Color(NSColor.textBackgroundColor))
+                    .cornerRadius(8)
+                    .lineLimit(1...5)
+                    .onSubmit {
+                        sendMessage()
                     }
+                
+                // Send/Stop button
+                if viewModel.isProcessing {
+                    Button(action: {
+                        viewModel.cancelStreaming()
+                    }) {
+                        Image(systemName: "stop.circle.fill")
+                            .font(.title2)
+                            .foregroundColor(.red)
+                    }
+                    .buttonStyle(.plain)
+                    .help("Stop Generating")
+                } else {
+                    Button(action: sendMessage) {
+                        Image(systemName: "paperplane.fill")
+                            .font(.title3)
+                            .foregroundColor(inputText.isEmpty ? .secondary : .accentColor)
+                    }
+                    .buttonStyle(.plain)
+                    .disabled(inputText.isEmpty)
+                    .help("Send Message")
                 }
-                .padding(.horizontal)
-                .padding(.bottom, 8)
             }
+            .padding()
         }
         .background(Color(NSColor.controlBackgroundColor))
     }
@@ -199,23 +129,6 @@ struct AISidebarView: View {
         guard !inputText.isEmpty else { return }
         viewModel.sendMessage(inputText)
         inputText = ""
-    }
-}
-
-/// Context toggle button
-struct ContextToggleButton: View {
-    let icon: String
-    let isOn: Bool
-    let action: () -> Void
-    
-    var body: some View {
-        Button(action: action) {
-            Image(systemName: icon)
-                .font(.caption)
-                .foregroundColor(isOn ? .accentColor : .secondary)
-                .frame(width: 20, height: 20)
-        }
-        .buttonStyle(.plain)
     }
 }
 
