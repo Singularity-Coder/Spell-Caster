@@ -58,17 +58,15 @@ class ANSIParser {
             intermediates.removeAll()
         case 0x20...0x7E:
             // Printable ASCII
-            if let scalar = UnicodeScalar(byte) {
-                onPrint?(scalar)
-            }
+            let scalar = UnicodeScalar(byte)
+            onPrint?(scalar)
         case 0x7F:
             // DEL - ignore
             break
         case 0x80...0xFF:
             // UTF-8 continuation or high bytes
-            if let scalar = UnicodeScalar(byte) {
-                onPrint?(scalar)
-            }
+            let scalar = UnicodeScalar(byte)
+            onPrint?(scalar)
         default:
             break
         }

@@ -1,6 +1,25 @@
 import Foundation
 import Darwin
 
+// MARK: - Wait Status Macros
+// These macros are not available in Swift, so we implement them manually
+
+private func WIFEXITED(_ status: Int32) -> Bool {
+    return (status & 0x7f) == 0
+}
+
+private func WEXITSTATUS(_ status: Int32) -> Int32 {
+    return (status >> 8) & 0xff
+}
+
+private func WIFSIGNALED(_ status: Int32) -> Bool {
+    return ((status & 0x7f) + 1) >> 1 > 0
+}
+
+private func WTERMSIG(_ status: Int32) -> Int32 {
+    return status & 0x7f
+}
+
 /// PTY process management using forkpty
 class PTYProcess {
     // MARK: - Properties

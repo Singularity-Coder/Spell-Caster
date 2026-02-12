@@ -115,7 +115,7 @@ class PaneViewModel: ObservableObject, Identifiable {
             lastCommand: terminalState.shellIntegration?.currentCommand,
             lastCommandExitStatus: terminalState.shellIntegration?.lastExitStatus,
             gitBranch: terminalState.shellIntegration?.gitBranch,
-            terminalSize: (rows: grid.rows, columns: grid.columns)
+            terminalSize: TerminalSize(rows: grid.rows, columns: grid.columns)
         )
     }
     

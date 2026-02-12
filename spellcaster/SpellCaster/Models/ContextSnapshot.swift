@@ -1,5 +1,11 @@
 import Foundation
 
+/// Terminal size structure
+struct TerminalSize: Codable {
+    var rows: Int
+    var columns: Int
+}
+
 /// Terminal context snapshot for AI
 struct ContextSnapshot: Codable {
     // MARK: - Working Directory
@@ -48,7 +54,7 @@ struct ContextSnapshot: Codable {
     // MARK: - Metadata
     
     var captureTimestamp: Date
-    var terminalSize: (rows: Int, columns: Int)
+    var terminalSize: TerminalSize
     
     init(
         currentWorkingDirectory: String? = nil,
@@ -68,7 +74,7 @@ struct ContextSnapshot: Codable {
         redacted: Bool = false,
         redactionCount: Int = 0,
         captureTimestamp: Date = Date(),
-        terminalSize: (rows: Int, columns: Int) = (24, 80)
+        terminalSize: TerminalSize = TerminalSize(rows: 24, columns: 80)
     ) {
         self.currentWorkingDirectory = currentWorkingDirectory
         self.shellType = shellType

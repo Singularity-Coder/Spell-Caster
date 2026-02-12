@@ -46,9 +46,6 @@ class TerminalView: NSView {
     private func setupView() {
         wantsLayer = true
         layer?.isOpaque = true
-        
-        // Enable key events
-        acceptsFirstResponder = true
     }
     
     private func setupObservers() {
@@ -165,7 +162,7 @@ class TerminalView: NSView {
     
     // MARK: - Paste
     
-    override func paste(_ sender: Any?) {
+    @objc func paste(_ sender: Any?) {
         let pasteboard = NSPasteboard.general
         if let string = pasteboard.string(forType: .string) {
             onPaste?(string)
@@ -174,7 +171,7 @@ class TerminalView: NSView {
     
     // MARK: - Copy
     
-    override func copy(_ sender: Any?) {
+    @objc func copy(_ sender: Any?) {
         guard let text = selectionManager?.selectedText else { return }
         
         let pasteboard = NSPasteboard.general

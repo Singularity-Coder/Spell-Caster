@@ -1,5 +1,6 @@
 import Foundation
 import Combine
+import AppKit
 
 /// AI sidebar logic
 class AISidebarViewModel: ObservableObject {
