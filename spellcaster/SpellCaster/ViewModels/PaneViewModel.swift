@@ -55,6 +55,17 @@ class PaneViewModel: ObservableObject, Identifiable {
     
     // MARK: - Process Management
     
+    /// Launch the shell lazily (after a delay to allow window to appear first)
+    func launchLazily() {
+        DispatchQueue.global(qos: .userInitiated).asyncAfter(deadline: .now() + 0.1) { [weak self] in
+            do {
+                try self?.launch()
+            } catch {
+                print("Failed to launch shell: \(error)")
+            }
+        }
+    }
+    
     func launch() throws {
         guard !isRunning else { return }
         

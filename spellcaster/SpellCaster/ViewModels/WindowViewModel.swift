@@ -30,7 +30,7 @@ class WindowViewModel: ObservableObject, Identifiable {
             systemPromptPreset: profile.aiSystemPromptPreset
         )
         
-        // Create initial pane
+        // Create initial pane (don't launch yet - launch lazily)
         createPane()
         
         // Listen for pane exit notifications
@@ -71,8 +71,8 @@ class WindowViewModel: ObservableObject, Identifiable {
         panes.append(pane)
         setActivePane(pane)
         
-        // Launch the shell
-        try? pane.launch()
+        // Launch the shell lazily (on first access)
+        pane.launchLazily()
         
         return pane
     }

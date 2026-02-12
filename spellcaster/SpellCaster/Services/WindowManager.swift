@@ -1,5 +1,6 @@
 import Foundation
 import SwiftUI
+import AppKit
 import Combine
 
 /// Window lifecycle management
@@ -14,6 +15,7 @@ class WindowManager: ObservableObject {
     @Published var activeWindowID: UUID?
     
     private var cancellables = Set<AnyCancellable>()
+    private var nsWindows: [UUID: NSWindow] = [:]
     
     // MARK: - Initialization
     
@@ -37,12 +39,48 @@ class WindowManager: ObservableObject {
     // MARK: - Window Management
     
     func createNewWindow() {
-        let window = WindowViewModel()
-        windows.append(window)
-        activeWindowID = window.id
+        let windowViewModel = WindowViewModel()
+        windows.append(windowViewModel)
+        activeWindowID = windowViewModel.id
+        
+        // Create and show the NSWindow
+        let contentView = MainWindowView()
+            .environmentObject(windowViewModel)
+            .environmentObject(self)
+        
+        let hostingController = NSHostingController(rootView: contentView)
+        
+        let nsWindow = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 1200, height: 800),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
+            backing: .buffered,
+            defer: false
+        )
+        
+        nsWindow.title = "Spell Caster"
+        nsWindow.contentViewController = hostingController
+        nsWindow.center()
+        nsWindow.setFrameAutosaveName("SpellCasterMainWindow")
+        nsWindow.minSize = NSSize(width: 800, height: 600)
+        nsWindow.titlebarAppearsTransparent = false
+        nsWindow.titleVisibility = .visible
+        nsWindow.isReleasedWhenClosed = false
+        
+        // Store reference
+        nsWindows[windowViewModel.id] = nsWindow
+        
+        // Show window
+        nsWindow.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
     }
     
     func closeWindow(_ window: WindowViewModel) {
+        // Close and release the NSWindow
+        if let nsWindow = nsWindows[window.id] {
+            nsWindow.close()
+            nsWindows.removeValue(forKey: window.id)
+        }
+        
         window.cleanup()
         windows.removeAll(where: { $0.id == window.id })
         
@@ -53,6 +91,10 @@ class WindowManager: ObservableObject {
     
     func setActiveWindow(_ window: WindowViewModel) {
         activeWindowID = window.id
+        // Bring window to front
+        if let nsWindow = nsWindows[window.id] {
+            nsWindow.makeKeyAndOrderFront(nil)
+        }
     }
     
     var activeWindow: WindowViewModel? {
@@ -103,6 +145,12 @@ class WindowManager: ObservableObject {
     // MARK: - Cleanup
     
     func cleanupAllProcesses() {
+        // Close all windows
+        for (_, nsWindow) in nsWindows {
+            nsWindow.close()
+        }
+        nsWindows.removeAll()
+        
         windows.forEach { $0.cleanup() }
         windows.removeAll()
     }
