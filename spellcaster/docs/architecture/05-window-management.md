@@ -2,1060 +2,326 @@
 
 ## Overview
 
-The WindowManager module handles the lifecycle and organization of windows, tabs, and panes. This document specifies the architecture for managing multiple terminal sessions with split panes, tab management, and session persistence.
+Spell Caster uses **native macOS window tabbing** for a streamlined, familiar user experience. Instead of implementing custom tab bars and window managers, the app leverages macOS's built-in window tabbing features, providing users with the same tab management they expect from other macOS applications like Safari, Terminal, and Finder.
 
-## Architecture
+## Architecture Decision
+
+### Why Native Tabs?
+
+1. **Familiar UX**: Users already know how to use macOS tabs - ⌘T for new tab, dragging tabs to reorder, etc.
+2. **Reduced Complexity**: No need to maintain custom tab bar UI, drag-and-drop logic, or tab state management
+3. **Better Integration**: Native tabs work seamlessly with macOS features like:
+   - Window → Merge All Windows
+   - Window → Move Tab to New Window
+   - System window management shortcuts
+4. **Consistent Behavior**: Native tabs behave identically across all macOS versions
+
+### Architecture Diagram
 
 ```mermaid
 graph TB
-    subgraph WindowManager
-        WM[Window Manager]
-        WC[Window Controller]
-        TC[Tab Controller]
-        PC[Pane Controller]
+    subgraph App
+        SC[SpellCasterApp]
+        AD[AppDelegate]
     end
     
-    subgraph Persistence
-        SP[Session Persister]
-        SR[Session Restorer]
+    subgraph WindowGroup
+        MWV[MainWindowView]
     end
     
-    subgraph UI
-        WV[Window View]
-        TV[Tab Bar View]
-        PV[Pane View]
+    subgraph PerWindow
+        PVM[PaneViewModel]
+        AIS[AISession]
+        TVR[TerminalViewRepresentable]
+        ASV[AISidebarView]
     end
     
-    WM --> WC
-    WC --> TC
-    TC --> PC
-    WM --> SP
-    SP --> SR
-    WC --> WV
-    TC --> TV
-    PC --> PV
+    SC --> MWV
+    AD --> |enables tabbing| NSApp[NSApplication]
+    MWV --> PVM
+    MWV --> AIS
+    MWV --> TVR
+    MWV --> ASV
 ```
 
-## Window Manager
+## App Entry Point
 
-### Core Manager
+### SpellCasterApp.swift
 
 ```swift
 import SwiftUI
-import Combine
+import AppKit
 
-/// Manages all application windows
-@MainActor
-@Observable
-final class WindowManager {
-    // MARK: - Singleton
+@main
+struct SpellCasterApp: App {
+    @NSApplicationDelegateAdaptor(AppDelegate.self) var appDelegate
     
-    static let shared = WindowManager()
-    
-    // MARK: - Properties
-    
-    private(set) var windows: [WindowModel] = []
-    private var windowControllers: [UUID: WindowController] = [:]
-    
-    // MARK: - Publishers
-    
-    private let windowsSubject = PassthroughSubject<[WindowModel], Never>()
-    var windowsPublisher: AnyPublisher<[WindowModel], Never> {
-        windowsSubject.eraseToAnyPublisher()
-    }
-    
-    // MARK: - Dependencies
-    
-    private let sessionPersister: SessionPersister
-    private let preferences: Preferences
-    
-    // MARK: - Initialization
-    
-    private init() {
-        self.sessionPersister = SessionPersister()
-        self.preferences = Preferences.shared
-    }
-    
-    // MARK: - Window Creation
-    
-    @discardableResult
-    func createWindow(profile: Profile? = nil) -> WindowModel {
-        let profile = profile ?? preferences.defaultProfile
-        let window = WindowModel(profile: profile)
-        
-        // Create initial tab
-        window.createTab(profile: profile)
-        
-        windows.append(window)
-        
-        // Create window controller
-        let controller = WindowController(window: window)
-        windowControllers[window.id] = controller
-        controller.show()
-        
-        windowsSubject.send(windows)
-        
-        return window
-    }
-    
-    // MARK: - Window Management
-    
-    func closeWindow(_ windowId: UUID) {
-        guard let index = windows.firstIndex(where: { $0.id == windowId }) else {
-            return
+    var body: some Scene {
+        WindowGroup {
+            MainWindowView()
+                .navigationTitle("Spell Caster")
         }
-        
-        let window = windows[index]
-        
-        // Clean up window controller
-        windowControllers[windowId]?.close()
-        windowControllers.removeValue(forKey: windowId)
-        
-        // Remove from array
-        windows.remove(at: index)
-        
-        windowsSubject.send(windows)
-        
-        // Quit if no windows remain
-        if windows.isEmpty && preferences.quitWhenLastWindowClosed {
-            NSApplication.shared.terminate(nil)
-        }
-    }
-    
-    func window(id: UUID) -> WindowModel? {
-        windows.first { $0.id == id }
-    }
-    
-    func windowController(id: UUID) -> WindowController? {
-        windowControllers[id]
-    }
-    
-    // MARK: - Focus Management
-    
-    func focusWindow(_ windowId: UUID) {
-        guard let controller = windowControllers[windowId] else { return }
-        controller.makeKeyAndOrderFront()
-    }
-    
-    func activeWindow() -> WindowModel? {
-        guard let keyWindow = NSApplication.shared.keyWindow else { return nil }
-        return windows.first { window in
-            windowControllers[window.id]?.window == keyWindow
-        }
-    }
-    
-    // MARK: - Session Persistence
-    
-    func saveSessions() {
-        sessionPersister.save(windows: windows)
-    }
-    
-    func restoreSessions() {
-        guard preferences.restoreSessionsOnLaunch else { return }
-        
-        let restoredWindows = sessionPersister.restore()
-        
-        for windowModel in restoredWindows {
-            windows.append(windowModel)
-            
-            let controller = WindowController(window: windowModel)
-            windowControllers[windowModel.id] = controller
-            controller.show()
-            
-            // Restore terminal sessions
-            for tab in windowModel.tabs {
-                for pane in tab.panes {
-                    restorePane(pane, profile: windowModel.profile)
+        .windowStyle(.automatic)
+        .commands {
+            // Replace default new item with new window (uses native tabs)
+            CommandGroup(replacing: .newItem) {
+                Button("New Window") {
+                    // Create new window - macOS will handle tabbing
+                    NSApp.sendAction(#selector(NSApplication.newWindowForTab(_:)), to: nil, from: nil)
                 }
+                .keyboardShortcut("n", modifiers: .command)
+                
+                Button("New Tab") {
+                    // Create new tab in current window
+                    NSApp.sendAction(#selector(NSApplication.newWindowForTab(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("t", modifiers: .command)
+            }
+            
+            // Add window menu commands for tab management
+            CommandGroup(after: .windowArrangement) {
+                Button("Merge All Windows") {
+                    // Trigger merge via first responder
+                    NSApp.sendAction(#selector(NSWindow.toggleTabBar(_:)), to: nil, from: nil)
+                }
+                
+                Divider()
+                
+                Button("Toggle Tab Bar") {
+                    NSApp.sendAction(#selector(NSWindow.toggleTabBar(_:)), to: nil, from: nil)
+                }
+                .keyboardShortcut("t", modifiers: [.command, .shift])
             }
         }
         
-        windowsSubject.send(windows)
-    }
-    
-    private func restorePane(_ pane: PaneModel, profile: Profile) {
-        // Create new PTY session
-        let ptyManager = PTYManager()
-        
-        do {
-            let session = try ptyManager.createSession(
-                shell: profile.shell.path,
-                environment: profile.shell.environment,
-                workingDirectory: pane.currentWorkingDirectory ?? profile.shell.workingDirectory,
-                size: pane.size
-            )
-            pane.ptySession = session
-        } catch {
-            print("Failed to restore pane session: \(error)")
+        Settings {
+            PreferencesView()
         }
-    }
-    
-    // MARK: - Cleanup
-    
-    func closeAllWindows() {
-        for window in windows {
-            windowControllers[window.id]?.close()
-        }
-        windows.removeAll()
-        windowControllers.removeAll()
     }
 }
 ```
 
-## Window Controller
-
-### NSWindowController Integration
+### AppDelegate.swift
 
 ```swift
 import AppKit
 import SwiftUI
 
-/// Controls a single window
-final class WindowController: NSWindowController {
-    // MARK: - Properties
+class AppDelegate: NSObject, NSApplicationDelegate {
     
-    private let windowModel: WindowModel
-    private var hostingController: NSHostingController<WindowContentView>?
+    // MARK: - Application Lifecycle
     
-    // MARK: - Initialization
-    
-    init(window: WindowModel) {
-        self.windowModel = window
+    func applicationDidFinishLaunching(_ notification: Notification) {
+        // Enable native window tabbing - this is the key setting
+        NSWindow.allowsAutomaticWindowTabbing = true
         
-        // Create NSWindow
-        let nsWindow = NSWindow(
-            contentRect: window.frame ?? NSRect(x: 0, y: 0, width: 1200, height: 800),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
-            backing: .buffered,
-            defer: false
-        )
-        
-        super.init(window: nsWindow)
-        
-        setupWindow()
-        setupContent()
+        // Set activation policy
+        NSApp.setActivationPolicy(.regular)
     }
     
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+    func applicationWillTerminate(_ notification: Notification) {
+        // Clean up any running PTY processes
+        // PTY processes will be cleaned up when their views are deallocated
     }
     
-    // MARK: - Setup
-    
-    private func setupWindow() {
-        guard let window = window else { return }
-        
-        window.title = windowModel.title
-        window.titlebarAppearsTransparent = true
-        window.titleVisibility = .hidden
-        
-        // Set minimum size
-        window.minSize = NSSize(width: 400, height: 300)
-        
-        // Center window if no frame saved
-        if windowModel.frame == nil {
-            window.center()
-        }
-        
-        // Window delegate
-        window.delegate = self
-        
-        // Apply window style
-        applyWindowStyle()
+    func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return true
     }
     
-    private func setupContent() {
-        guard let window = window else { return }
-        
-        // Create SwiftUI view
-        let contentView = WindowContentView(window: windowModel)
-        
-        // Create hosting controller
-        let hosting = NSHostingController(rootView: contentView)
-        hostingController = hosting
-        
-        window.contentView = hosting.view
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
+        return true
     }
-    
-    private func applyWindowStyle() {
-        guard let window = window else { return }
-        
-        let style = windowModel.profile.windowStyle
-        
-        // Apply transparency
-        if style.transparency > 0 {
-            window.isOpaque = false
-            window.backgroundColor = NSColor.clear
-            
-            if style.blur {
-                // Add vibrancy effect
-                let visualEffect = NSVisualEffectView()
-                visualEffect.blendingMode = .behindWindow
-                visualEffect.state = .active
-                visualEffect.material = .hudWindow
-                
-                if let contentView = window.contentView {
-                    visualEffect.frame = contentView.bounds
-                    visualEffect.autoresizingMask = [.width, .height]
-                    contentView.addSubview(visualEffect, positioned: .below, relativeTo: nil)
-                }
-            }
-        }
-    }
-    
-    // MARK: - Window Management
-    
-    func show() {
-        window?.makeKeyAndOrderFront(nil)
-    }
-    
-    func makeKeyAndOrderFront() {
-        window?.makeKeyAndOrderFront(nil)
-    }
-    
-    override func close() {
-        // Save window frame
-        if let frame = window?.frame {
-            windowModel.frame = frame
-        }
-        
-        // Terminate all terminal sessions
-        for tab in windowModel.tabs {
-            for pane in tab.panes {
-                pane.ptySession?.terminate()
-            }
-        }
-        
-        super.close()
-    }
-}
-
-// MARK: - Window Delegate
-
-extension WindowController: NSWindowDelegate {
-    func windowWillClose(_ notification: Notification) {
-        WindowManager.shared.closeWindow(windowModel.id)
-    }
-    
-    func windowDidResize(_ notification: Notification) {
-        // Save frame
-        if let frame = window?.frame {
-            windowModel.frame = frame
-        }
-    }
-    
-    func windowDidMove(_ notification: Notification) {
-        // Save frame
-        if let frame = window?.frame {
-            windowModel.frame = frame
-        }
-    }
-    
-    func windowDidBecomeKey(_ notification: Notification) {
-        // Update active window
-        NotificationCenter.default.post(
-            name: .windowDidBecomeActive,
-            object: windowModel
-        )
-    }
-}
-
-// MARK: - Notifications
-
-extension Notification.Name {
-    static let windowDidBecomeActive = Notification.Name("windowDidBecomeActive")
 }
 ```
 
-## Window Content View
+## Main Window View
 
-### SwiftUI Window Layout
+### MainWindowView.swift
+
+Each window (tab) is completely independent with its own terminal session and AI sidebar:
 
 ```swift
 import SwiftUI
 
-/// Main window content view
-struct WindowContentView: View {
-    @ObservedObject var window: WindowModel
-    @State private var selectedTabId: UUID?
+/// Main window layout with terminal area and AI sidebar
+struct MainWindowView: View {
+    @StateObject private var paneViewModel: PaneViewModel
+    @StateObject private var aiSession: AISession
+    @State private var sidebarVisible: Bool = true
+    
+    init() {
+        let profile = ProfileManager.shared.getDefaultProfile()
+        _paneViewModel = StateObject(wrappedValue: PaneViewModel(profile: profile))
+        _aiSession = StateObject(wrappedValue: AISession(
+            selectedModel: profile.aiModel,
+            systemPromptPreset: profile.aiSystemPromptPreset
+        ))
+    }
     
     var body: some View {
         HSplitView {
             // Terminal area
-            VStack(spacing: 0) {
-                // Tab bar
-                TabBarView(
-                    tabs: window.tabs,
-                    activeTabId: $window.activeTabId,
-                    onNewTab: { window.createTab() },
-                    onCloseTab: { window.closeTab($0) }
-                )
-                
-                // Active tab content
-                if let activeTab = window.activeTab {
-                    TabContentView(tab: activeTab)
-                } else {
-                    EmptyTerminalView()
-                }
+            TerminalViewRepresentable(paneViewModel: paneViewModel)
+                .frame(minWidth: 400)
+            
+            // AI Sidebar (toggleable)
+            if sidebarVisible {
+                AISidebarView(session: aiSession, paneViewModel: paneViewModel)
+                    .frame(minWidth: 300, idealWidth: 350, maxWidth: 500)
+                    .transition(.move(edge: .trailing))
             }
-            .frame(minWidth: 400)
+        }
+        .frame(minWidth: 800, minHeight: 600)
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                // Toggle sidebar button
+                Button(action: {
+                    withAnimation {
+                        sidebarVisible.toggle()
+                    }
+                }) {
+                    Label("Toggle AI Sidebar", systemImage: sidebarVisible ? "sidebar.right" : "sidebar.left")
+                }
+                .help("Toggle AI Sidebar")
+            }
+        }
+        .onAppear {
+            // Launch the shell when view appears
+            paneViewModel.launchLazily()
+        }
+    }
+}
+```
+
+## Per-Window State Isolation
+
+### Key Design Principle
+
+Each `MainWindowView` instance creates its own state objects via `@StateObject`:
+
+| State Object | Purpose | Isolation |
+|--------------|---------|-----------|
+| `PaneViewModel` | Terminal session (PTY), scrollback buffer, current directory | Per-window |
+| `AISession` | AI chat history, model selection, system prompt | Per-window |
+| `sidebarVisible` | Sidebar visibility toggle | Per-window |
+
+This ensures:
+- Each tab has an independent terminal session
+- AI conversations are isolated per window
+- Settings changes in one window don't affect others
+
+## Native Tab Features
+
+### User Actions
+
+| Action | Shortcut | Result |
+|--------|----------|--------|
+| New Window/Tab | ⌘N or ⌘T | Creates new window (macOS may auto-tab) |
+| Toggle Tab Bar | ⇧⌘T | Shows/hides the tab bar |
+| Close Tab | ⌘W | Closes current tab/window |
+| Move Tab to New Window | Window menu | Detaches tab to separate window |
+| Merge All Windows | Window menu | Combines all windows into tabs |
+
+### Tab Bar Behavior
+
+macOS automatically shows the tab bar when:
+1. A window has multiple tabs
+2. The user explicitly shows it via ⇧⌘T
+3. `NSWindow.tabbingMode` is set to `.preferred`
+
+### Programmatic Control
+
+```swift
+// Enable/disable automatic tabbing globally
+NSWindow.allowsAutomaticWindowTabbing = true
+
+// Control per-window tabbing behavior
+window.tabbingMode = .preferred  // Auto-tab when possible
+window.tabbingMode = .disallowed // Never tab this window
+window.tabbingMode = .automatic  // Use system default
+
+// Toggle tab bar visibility
+window.toggleTabBar(nil)
+```
+
+## Removed Components
+
+The following components from the original architecture have been **removed** in favor of native tabs:
+
+| Removed Component | Replacement |
+|-------------------|-------------|
+| `WindowManager.swift` | Native `WindowGroup` |
+| `WindowViewModel.swift` | Per-view `@StateObject` |
+| `TabBarView.swift` | Native macOS tab bar |
+| `SplitPaneView.swift` | Future: Native split view or separate feature |
+| `WindowController` | SwiftUI `WindowGroup` |
+
+## Future: Split Panes (Optional)
+
+Split panes within a window are not currently implemented. If needed in the future, they can be added as a separate feature within `MainWindowView`:
+
+```swift
+// Future implementation concept
+struct MainWindowView: View {
+    @State private var splitPanes: [PaneViewModel] = []
+    @State private var splitDirection: SplitDirection? = nil
+    
+    var body: some View {
+        HSplitView {
+            if let direction = splitDirection {
+                // Render split panes
+                ForEach(splitPanes) { pane in
+                    TerminalViewRepresentable(paneViewModel: pane)
+                }
+            } else {
+                // Single pane
+                TerminalViewRepresentable(paneViewModel: paneViewModel)
+            }
             
             // AI Sidebar
-            if window.isAISidebarVisible {
-                AISidebarView(session: window.aiSession)
-                    .frame(width: window.sidebarWidth)
+            if sidebarVisible {
+                AISidebarView(session: aiSession, paneViewModel: activePane)
             }
-        }
-        .background(window.profile.colors.background)
-    }
-}
-
-/// Empty terminal placeholder
-struct EmptyTerminalView: View {
-    var body: some View {
-        VStack {
-            Image(systemName: "terminal")
-                .font(.system(size: 64))
-                .foregroundColor(.secondary)
-            Text("No Terminal Session")
-                .font(.title2)
-                .foregroundColor(.secondary)
-        }
-        .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
-}
-```
-
-## Tab Management
-
-### Tab Controller
-
-```swift
-import SwiftUI
-
-/// Tab bar view
-struct TabBarView: View {
-    let tabs: [TabModel]
-    @Binding var activeTabId: UUID?
-    let onNewTab: () -> Void
-    let onCloseTab: (UUID) -> Void
-    
-    @State private var draggedTab: TabModel?
-    
-    var body: some View {
-        HStack(spacing: 0) {
-            // Tab items
-            ForEach(tabs) { tab in
-                TabItemView(
-                    tab: tab,
-                    isActive: tab.id == activeTabId,
-                    onSelect: { activeTabId = tab.id },
-                    onClose: { onCloseTab(tab.id) }
-                )
-                .onDrag {
-                    draggedTab = tab
-                    return NSItemProvider(object: tab.id.uuidString as NSString)
-                }
-                .onDrop(of: [.text], delegate: TabDropDelegate(
-                    tab: tab,
-                    tabs: tabs,
-                    draggedTab: $draggedTab
-                ))
-            }
-            
-            Spacer()
-            
-            // New tab button
-            Button(action: onNewTab) {
-                Image(systemName: "plus")
-                    .font(.system(size: 12))
-            }
-            .buttonStyle(.plain)
-            .padding(.horizontal, 8)
-        }
-        .frame(height: 32)
-        .background(Color(nsColor: .controlBackgroundColor))
-    }
-}
-
-/// Individual tab item
-struct TabItemView: View {
-    let tab: TabModel
-    let isActive: Bool
-    let onSelect: () -> Void
-    let onClose: () -> Void
-    
-    @State private var isHovered = false
-    
-    var body: some View {
-        HStack(spacing: 4) {
-            // Tab color indicator
-            if let color = tab.color {
-                Circle()
-                    .fill(color)
-                    .frame(width: 8, height: 8)
-            }
-            
-            // Tab title
-            Text(tab.title)
-                .font(.system(size: 12))
-                .lineLimit(1)
-                .foregroundColor(isActive ? .primary : .secondary)
-            
-            // Close button
-            if isHovered || isActive {
-                Button(action: onClose) {
-                    Image(systemName: "xmark")
-                        .font(.system(size: 10))
-                }
-                .buttonStyle(.plain)
-            }
-        }
-        .padding(.horizontal, 12)
-        .padding(.vertical, 6)
-        .background(isActive ? Color(nsColor: .selectedControlColor) : Color.clear)
-        .cornerRadius(4)
-        .onHover { isHovered = $0 }
-        .onTapGesture(perform: onSelect)
-        .contextMenu {
-            Button("Duplicate Tab") {
-                // TODO: Implement
-            }
-            Button("Move to New Window") {
-                // TODO: Implement
-            }
-            Divider()
-            Button("Close Tab", action: onClose)
-            Button("Close Other Tabs") {
-                // TODO: Implement
-            }
-        }
-    }
-}
-
-/// Drop delegate for tab reordering
-struct TabDropDelegate: DropDelegate {
-    let tab: TabModel
-    let tabs: [TabModel]
-    @Binding var draggedTab: TabModel?
-    
-    func performDrop(info: DropInfo) -> Bool {
-        draggedTab = nil
-        return true
-    }
-    
-    func dropEntered(info: DropInfo) {
-        guard let draggedTab = draggedTab,
-              draggedTab.id != tab.id,
-              let fromIndex = tabs.firstIndex(where: { $0.id == draggedTab.id }),
-              let toIndex = tabs.firstIndex(where: { $0.id == tab.id }) else {
-            return
-        }
-        
-        // Reorder tabs
-        withAnimation {
-            var updatedTabs = tabs
-            updatedTabs.move(fromOffsets: IndexSet(integer: fromIndex), toOffset: toIndex)
-            // Update parent model
         }
     }
 }
 ```
 
-### Tab Content View
+## Session Persistence (Future)
+
+Session persistence can be implemented using SwiftUI's state restoration:
 
 ```swift
-import SwiftUI
-
-/// Content view for a single tab
-struct TabContentView: View {
-    @ObservedObject var tab: TabModel
-    
-    var body: some View {
-        GeometryReader { geometry in
-            switch tab.splitConfiguration {
-            case .single:
-                if let pane = tab.panes.first {
-                    PaneView(pane: pane)
-                }
-                
-            case .splitTwo(let direction):
-                if direction == .horizontal {
-                    HSplitView {
-                        ForEach(tab.panes) { pane in
-                            PaneView(pane: pane)
-                        }
-                    }
-                } else {
-                    VSplitView {
-                        ForEach(tab.panes) { pane in
-                            PaneView(pane: pane)
-                        }
-                    }
-                }
-                
-            case .complex:
-                // Complex layout with multiple splits
-                ComplexSplitView(panes: tab.panes)
-            }
-        }
-    }
-}
-
-/// Complex split view for multiple panes
-struct ComplexSplitView: View {
-    let panes: [PaneModel]
-    
-    var body: some View {
-        // TODO: Implement complex layout algorithm
-        Text("Complex layout not yet implemented")
-    }
-}
-```
-
-## Pane Management
-
-### Pane Controller
-
-```swift
-import SwiftUI
-
-/// View for a single terminal pane
-struct PaneView: View {
-    @ObservedObject var pane: PaneModel
-    @State private var isFocused = false
-    
-    var body: some View {
-        ZStack {
-            // Terminal view (AppKit bridge)
-            TerminalView(
-                engine: pane.terminalEngine,
-                selection: $pane.selection
-            )
-            .focused($isFocused)
-            
-            // Focus indicator
-            if isFocused {
-                Rectangle()
-                    .stroke(Color.accentColor, lineWidth: 2)
-                    .allowsHitTesting(false)
-            }
-        }
-        .contextMenu {
-            PaneContextMenu(pane: pane)
-        }
-    }
-}
-
-/// Context menu for pane
-struct PaneContextMenu: View {
-    let pane: PaneModel
-    
-    var body: some View {
-        Button("Split Horizontally") {
-            // TODO: Implement
-        }
-        Button("Split Vertically") {
-            // TODO: Implement
-        }
-        Divider()
-        Button("Copy") {
-            if let selection = pane.selection {
-                // Copy selection to clipboard
-            }
-        }
-        Button("Paste") {
-            // Paste from clipboard
-        }
-        Divider()
-        Button("Clear Scrollback") {
-            pane.scrollback.clear()
-        }
-        Button("Reset Terminal") {
-            // Reset terminal state
-        }
-        Divider()
-        Button("Close Pane") {
-            // Close this pane
-        }
-    }
-}
-```
-
-### Split Pane Implementation
-
-```swift
-extension TabModel {
-    /// Split a pane horizontally or vertically
-    func splitPane(
-        _ paneId: UUID,
-        direction: SplitDirection,
-        profile: Profile? = nil
-    ) -> PaneModel {
-        guard let index = panes.firstIndex(where: { $0.id == paneId }) else {
-            preconditionFailure("Pane not found")
-        }
-        
-        let existingPane = panes[index]
-        let newPane = PaneModel(profile: profile ?? existingPane.profile)
-        
-        // Insert new pane
-        panes.insert(newPane, at: index + 1)
-        
-        // Update split configuration
-        updateSplitConfiguration(direction: direction)
-        
-        // Start terminal session for new pane
-        startPaneSession(newPane)
-        
-        return newPane
-    }
-    
-    private func updateSplitConfiguration(direction: SplitDirection) {
-        switch panes.count {
-        case 0, 1:
-            splitConfiguration = .single
-        case 2:
-            splitConfiguration = .splitTwo(direction)
-        default:
-            splitConfiguration = .complex
-        }
-    }
-    
-    private func startPaneSession(_ pane: PaneModel) {
-        let ptyManager = PTYManager()
-        
-        do {
-            let session = try ptyManager.createSession(
-                shell: pane.profile.shell.path,
-                environment: pane.profile.shell.environment,
-                workingDirectory: pane.profile.shell.workingDirectory,
-                size: pane.size
-            )
-            pane.ptySession = session
-        } catch {
-            print("Failed to start pane session: \(error)")
-        }
-    }
-}
-```
-
-## Session Persistence
-
-### Session Persister
-
-```swift
-import Foundation
-
-/// Persists and restores window sessions
-final class SessionPersister {
-    private let fileURL: URL
-    
-    init() {
-        let appSupport = FileManager.default.urls(
-            for: .applicationSupportDirectory,
-            in: .userDomainMask
-        ).first!
-        
-        let appDir = appSupport.appendingPathComponent("SpellCaster")
-        try? FileManager.default.createDirectory(at: appDir, withIntermediateDirectories: true)
-        
-        fileURL = appDir.appendingPathComponent("sessions.json")
-    }
-    
-    // MARK: - Save
-    
-    func save(windows: [WindowModel]) {
-        let encoder = JSONEncoder()
-        encoder.outputFormatting = .prettyPrinted
-        
-        do {
-            let data = try encoder.encode(windows)
-            try data.write(to: fileURL)
-        } catch {
-            print("Failed to save sessions: \(error)")
-        }
-    }
-    
-    // MARK: - Restore
-    
-    func restore() -> [WindowModel] {
-        guard FileManager.default.fileExists(atPath: fileURL.path) else {
-            return []
-        }
-        
-        let decoder = JSONDecoder()
-        
-        do {
-            let data = try Data(contentsOf: fileURL)
-            let windows = try decoder.decode([WindowModel].self, from: data)
-            return windows
-        } catch {
-            print("Failed to restore sessions: \(error)")
-            return []
-        }
-    }
-    
-    // MARK: - Clear
-    
-    func clear() {
-        try? FileManager.default.removeItem(at: fileURL)
-    }
-}
-```
-
-### Session State
-
-```swift
-/// Serializable session state
+// Future: Session persistence
 struct SessionState: Codable {
     let windows: [WindowState]
-    let timestamp: Date
     
     struct WindowState: Codable {
-        let id: UUID
-        let frame: CGRect?
-        let tabs: [TabState]
-        let activeTabId: UUID?
-        let profile: Profile
-        
-        struct TabState: Codable {
-            let id: UUID
-            let title: String
-            let panes: [PaneState]
-            let activePaneId: UUID?
-            
-            struct PaneState: Codable {
-                let id: UUID
-                let workingDirectory: URL?
-                let size: TerminalSize
-                let scrollPosition: Int
-            }
-        }
-    }
-}
-```
-
-## Profile Management
-
-### Profile Application
-
-```swift
-extension WindowModel {
-    /// Apply a profile to the window
-    func applyProfile(_ profile: Profile) {
-        self.profile = profile
-        
-        // Apply to all tabs
-        for tab in tabs {
-            tab.applyProfile(profile)
-        }
-    }
-}
-
-extension TabModel {
-    /// Apply a profile to the tab
-    func applyProfile(_ profile: Profile) {
-        // Apply to all panes
-        for pane in panes {
-            pane.applyProfile(profile)
-        }
-    }
-}
-
-extension PaneModel {
-    /// Apply a profile to the pane
-    func applyProfile(_ profile: Profile) {
-        self.profile = profile
-        
-        // Update terminal appearance
-        // This would trigger renderer updates
-    }
-}
-```
-
-## Focus Management
-
-### Focus Tracking
-
-```swift
-/// Tracks focus across windows, tabs, and panes
-@MainActor
-final class FocusManager: ObservableObject {
-    static let shared = FocusManager()
-    
-    @Published private(set) var focusedWindow: UUID?
-    @Published private(set) var focusedTab: UUID?
-    @Published private(set) var focusedPane: UUID?
-    
-    private init() {
-        setupNotifications()
-    }
-    
-    private func setupNotifications() {
-        NotificationCenter.default.addObserver(
-            self,
-            selector: #selector(windowDidBecomeActive),
-            name: .windowDidBecomeActive,
-            object: nil
-        )
-    }
-    
-    @objc private func windowDidBecomeActive(_ notification: Notification) {
-        guard let window = notification.object as? WindowModel else { return }
-        focusedWindow = window.id
-        focusedTab = window.activeTabId
-        focusedPane = window.activeTab?.activePaneId
-    }
-    
-    func setFocus(window: UUID, tab: UUID, pane: UUID) {
-        focusedWindow = window
-        focusedTab = tab
-        focusedPane = pane
-    }
-    
-    func clearFocus() {
-        focusedWindow = nil
-        focusedTab = nil
-        focusedPane = nil
-    }
-}
-```
-
-## Keyboard Shortcuts
-
-### Window Commands
-
-```swift
-import SwiftUI
-
-/// Window management commands
-struct WindowCommands: Commands {
-    var body: some Commands {
-        CommandGroup(replacing: .newItem) {
-            Button("New Window") {
-                WindowManager.shared.createWindow()
-            }
-            .keyboardShortcut("n", modifiers: [.command])
-            
-            Button("New Tab") {
-                if let window = WindowManager.shared.activeWindow() {
-                    window.createTab()
-                }
-            }
-            .keyboardShortcut("t", modifiers: [.command])
-        }
-        
-        CommandMenu("Tab") {
-            Button("Close Tab") {
-                if let window = WindowManager.shared.activeWindow(),
-                   let tabId = window.activeTabId {
-                    window.closeTab(tabId)
-                }
-            }
-            .keyboardShortcut("w", modifiers: [.command])
-            
-            Button("Next Tab") {
-                // TODO: Implement
-            }
-            .keyboardShortcut("]", modifiers: [.command, .shift])
-            
-            Button("Previous Tab") {
-                // TODO: Implement
-            }
-            .keyboardShortcut("[", modifiers: [.command, .shift])
-            
-            Divider()
-            
-            Button("Split Horizontally") {
-                // TODO: Implement
-            }
-            .keyboardShortcut("d", modifiers: [.command])
-            
-            Button("Split Vertically") {
-                // TODO: Implement
-            }
-            .keyboardShortcut("d", modifiers: [.command, .shift])
-        }
-    }
-}
-```
-
-## Window Restoration
-
-### State Restoration
-
-```swift
-extension WindowManager {
-    /// Restore application state
-    func restoreApplicationState() {
-        // Restore windows
-        restoreSessions()
-        
-        // If no windows restored, create default window
-        if windows.isEmpty {
-            createWindow()
-        }
-    }
-    
-    /// Save application state
-    func saveApplicationState() {
-        saveSessions()
-    }
-}
-
-// MARK: - App Delegate Integration
-
-extension AppDelegate {
-    func applicationWillFinishLaunching(_ notification: Notification) {
-        WindowManager.shared.restoreApplicationState()
-    }
-    
-    func applicationWillTerminate(_ notification: Notification) {
-        WindowManager.shared.saveApplicationState()
-    }
-}
-```
-
-## Error Handling
-
-```swift
-enum WindowManagementError: Error, LocalizedError {
-    case windowNotFound
-    case tabNotFound
-    case paneNotFound
-    case failedToCreateWindow
-    case failedToRestoreSession
-    
-    var errorDescription: String? {
-        switch self {
-        case .windowNotFound:
-            return "Window not found"
-        case .tabNotFound:
-            return "Tab not found"
-        case .paneNotFound:
-            return "Pane not found"
-        case .failedToCreateWindow:
-            return "Failed to create window"
-        case .failedToRestoreSession:
-            return "Failed to restore session"
-        }
+        let workingDirectory: URL?
+        let aiHistory: [AIMessage]
+        let sidebarVisible: Bool
     }
 }
 ```
 
 ## Summary
 
-The WindowManager module provides:
+| Aspect | Implementation |
+|--------|----------------|
+| Window Management | Native `WindowGroup` |
+| Tab Management | Native macOS tabs (`NSWindow.allowsAutomaticWindowTabbing`) |
+| Per-Window State | `@StateObject` in `MainWindowView` |
+| Terminal Session | `PaneViewModel` (one per window) |
+| AI Session | `AISession` (one per window) |
+| Sidebar | Toggleable via toolbar button |
 
-| Component | Purpose |
-|-----------|---------|
-| [`WindowManager`](#window-manager) | Manages all windows and their lifecycle |
-| [`WindowController`](#window-controller) | Controls individual NSWindow instances |
-| [`TabBarView`](#tab-management) | Tab bar UI and management |
-| [`PaneView`](#pane-management) | Individual terminal pane views |
-| [`SessionPersister`](#session-persistence) | Saves and restores sessions |
-| [`FocusManager`](#focus-management) | Tracks focus across UI hierarchy |
+## Benefits of This Approach
+
+1. **Simplicity**: ~500 lines of code removed vs custom implementation
+2. **Native Feel**: Users get the exact behavior they expect from macOS
+3. **Maintainability**: No custom tab bar to maintain or debug
+4. **Performance**: Native tabs are optimized by Apple
+5. **Accessibility**: Native tabs work with VoiceOver and other assistive technologies
 
 ## Next Steps
 

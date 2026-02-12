@@ -18,8 +18,13 @@ Spell Caster is a macOS terminal emulator with an integrated AI co-pilot sidebar
 graph TB
     subgraph Application Layer
         App[SpellCasterApp]
-        WM[WindowManager]
+        MWV[MainWindowView]
         Prefs[Preferences]
+    end
+    
+    subgraph Per-Window State
+        PVM[PaneViewModel]
+        AIS[AISession]
     end
     
     subgraph Core Layer
@@ -40,20 +45,23 @@ graph TB
         FS[FileSystem]
     end
     
-    App --> WM
-    WM --> TE
-    WM --> AS
+    App --> MWV
+    MWV --> PVM
+    MWV --> AIS
+    PVM --> TE
     TE --> R
     TE --> CC
+    AIS --> AS
     AS --> AP
     AS --> CC
     AP --> Keychain
     TE --> PTY
     R --> Metal
-    Prefs --> WM
     Prefs --> TE
     Prefs --> AP
 ```
+
+> **Note**: Spell Caster uses **native macOS window tabbing** instead of a custom WindowManager. Each window (tab) is independent with its own `PaneViewModel` and `AISession`. See [05-window-management.md](05-window-management.md) for details.
 
 ## Module Definitions
 
@@ -83,18 +91,23 @@ graph TB
 
 **Dependencies**: TerminalEngine (for state)
 
-### 3. WindowManager
+### 3. Window Management (Native)
 
-**Responsibility**: Manages application windows, tabs, panes, and their lifecycle.
+**Responsibility**: Uses native macOS window tabbing instead of custom implementation.
 
 **Key Components**:
-- Window/Tab/Pane hierarchy
-- Split pane management
-- Focus management
-- Session persistence
-- Profile application
+- `WindowGroup` for window creation
+- `NSWindow.allowsAutomaticWindowTabbing` for native tabs
+- Per-window state via `@StateObject` in `MainWindowView`
+
+**Implementation**:
+- Each window has independent `PaneViewModel` (terminal session)
+- Each window has independent `AISession` (AI chat history)
+- Native tab bar provides familiar macOS tab experience
 
 **Dependencies**: TerminalEngine, Renderer, AISidebar, Preferences
+
+> See [05-window-management.md](05-window-management.md) for full details.
 
 ### 4. AISidebar
 
@@ -251,22 +264,10 @@ protocol ContextCaptureProtocol {
     func captureContext(selection: String?) -> AIContext
 }
 
-// MARK: - WindowManager Protocol
-
-/// Protocol for window management
-protocol WindowManagerProtocol: AnyObject {
-    /// All open windows
-    var windows: [Window] { get }
-    
-    /// Create a new window
-    func createWindow(profile: Profile?) -> Window
-    
-    /// Close a window
-    func closeWindow(_ window: Window)
-    
-    /// Get window by ID
-    func window(id: UUID) -> Window?
-}
+// MARK: - Window Management (Native Tabs)
+// Note: Spell Caster uses native macOS window tabbing instead of a custom WindowManager.
+// Each MainWindowView creates its own PaneViewModel and AISession via @StateObject.
+// See 05-window-management.md for implementation details.
 ```
 
 ## App Lifecycle and State Management
