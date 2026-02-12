@@ -10,6 +10,7 @@ class TerminalView: NSView {
     private var cancellables = Set<AnyCancellable>()
     private var cursorTimer: Timer?
     private var cursorVisible = true
+    private var resizeWorkItem: DispatchWorkItem?
     
     var selectionManager: SelectionManager?
     
@@ -39,6 +40,7 @@ class TerminalView: NSView {
     
     deinit {
         cursorTimer?.invalidate()
+        resizeWorkItem?.cancel()
     }
     
     // MARK: - Setup
@@ -92,19 +94,21 @@ class TerminalView: NSView {
     
     // MARK: - Layout
     
-    override func resize(withOldSuperviewSize oldSize: NSSize) {
-        super.resize(withOldSuperviewSize: oldSize)
-        updateTerminalSize()
+    override func setFrameSize(_ newSize: NSSize) {
+        super.setFrameSize(newSize)
+        // Only trigger resize on actual size change
+        resizeWorkItem?.cancel()
+        resizeWorkItem = DispatchWorkItem { [weak self] in
+            self?.triggerResize()
+        }
+        DispatchQueue.main.asyncAfter(deadline: .now() + 0.1, execute: resizeWorkItem!)
     }
     
-    private func updateTerminalSize() {
+    private func triggerResize() {
         let cellSize = renderer.cellSize
-        let rows = Int(bounds.height / cellSize.height)
-        let columns = Int(bounds.width / cellSize.width)
-        
-        if rows > 0 && columns > 0 {
-            onResize?(rows, columns)
-        }
+        let rows = max(1, Int(bounds.height / cellSize.height))
+        let columns = max(1, Int(bounds.width / cellSize.width))
+        onResize?(rows, columns)
     }
     
     // MARK: - First Responder
