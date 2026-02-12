@@ -8,6 +8,7 @@ class PaneViewModel: ObservableObject, Identifiable {
     let id: UUID
     @Published var terminalState: TerminalState
     @Published var isActive: Bool = false
+    @Published var isRunning: Bool = false
     
     private let ptyProcess: PTYProcess
     private let emulator: TerminalEmulator
@@ -24,6 +25,7 @@ class PaneViewModel: ObservableObject, Identifiable {
         self.terminalState = emulator.state
         
         setupPTYCallbacks()
+        setupTerminalStateObservers()
     }
     
     // MARK: - Setup
@@ -31,16 +33,31 @@ class PaneViewModel: ObservableObject, Identifiable {
     private func setupPTYCallbacks() {
         ptyProcess.onOutput = { [weak self] data in
             self?.emulator.processData(data)
+            self?.objectWillChange.send()
         }
         
         ptyProcess.onExit = { [weak self] exitCode in
-            self?.handleProcessExit(exitCode: exitCode)
+            DispatchQueue.main.async {
+                self?.isRunning = false
+                self?.handleProcessExit(exitCode: exitCode)
+            }
         }
+    }
+    
+    private func setupTerminalStateObservers() {
+        // Observe terminal state changes for redraw
+        terminalState.objectWillChange
+            .sink { [weak self] _ in
+                self?.objectWillChange.send()
+            }
+            .store(in: &cancellables)
     }
     
     // MARK: - Process Management
     
     func launch() throws {
+        guard !isRunning else { return }
+        
         let shellType = ShellType.detect(from: profile.shellPath)
         var env = profile.environmentVariables
         
@@ -56,11 +73,16 @@ class PaneViewModel: ObservableObject, Identifiable {
             rows: terminalState.activeGrid.rows,
             columns: terminalState.activeGrid.columns
         )
+        
+        isRunning = true
     }
     
     func terminate() {
         ptyProcess.terminate()
+        isRunning = false
     }
+    
+    // MARK: - Input
     
     func sendInput(_ data: Data) throws {
         try ptyProcess.write(data)
@@ -70,13 +92,25 @@ class PaneViewModel: ObservableObject, Identifiable {
         try ptyProcess.write(string)
     }
     
+    // MARK: - Resize
+    
     func resize(rows: Int, columns: Int) throws {
         try ptyProcess.resize(rows: rows, columns: columns)
         terminalState.resize(rows: rows, columns: columns)
     }
     
+    // MARK: - Signals
+    
     func sendSignal(_ signal: Int32) throws {
         try ptyProcess.sendSignal(signal)
+    }
+    
+    func sendInterrupt() throws {
+        try sendSignal(SIGINT)
+    }
+    
+    func sendSuspend() throws {
+        try sendSignal(SIGTSTP)
     }
     
     // MARK: - Terminal Operations
@@ -91,6 +125,13 @@ class PaneViewModel: ObservableObject, Identifiable {
     
     func reset() {
         terminalState.reset()
+    }
+    
+    // MARK: - Selection
+    
+    func getSelection() -> String? {
+        // TODO: Implement selection retrieval from terminal state
+        return nil
     }
     
     // MARK: - Context Capture
@@ -122,6 +163,9 @@ class PaneViewModel: ObservableObject, Identifiable {
     // MARK: - Private Methods
     
     private func handleProcessExit(exitCode: Int32) {
+        // Update shell integration with exit status
+        terminalState.shellIntegration?.lastExitStatus = Int(exitCode)
+        
         if profile.closeOnExit {
             // Notify that pane should close
             NotificationCenter.default.post(
@@ -130,6 +174,12 @@ class PaneViewModel: ObservableObject, Identifiable {
                 userInfo: ["exitCode": exitCode]
             )
         }
+    }
+    
+    // MARK: - Cleanup
+    
+    deinit {
+        terminate()
     }
 }
 

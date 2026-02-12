@@ -149,11 +149,11 @@ struct ContextInspectorView: View {
             }
             
             // Redacted items count
-            if context.redactedItemsCount > 0 {
+            if context.redactionCount > 0 {
                 HStack {
                     Image(systemName: "eye.slash.fill")
                         .foregroundColor(.orange)
-                    Text("\(context.redactedItemsCount) items redacted for security")
+                    Text("\(context.redactionCount) items redacted for security")
                         .font(.caption)
                         .foregroundColor(.orange)
                 }

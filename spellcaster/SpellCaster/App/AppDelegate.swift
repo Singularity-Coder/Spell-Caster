@@ -2,12 +2,21 @@ import AppKit
 import SwiftUI
 
 class AppDelegate: NSObject, NSApplicationDelegate {
+    // MARK: - Properties
+    
+    private var windowControllers: [NSWindowController] = []
+    
+    // MARK: - Application Lifecycle
+    
     func applicationDidFinishLaunching(_ notification: Notification) {
         // Configure app-wide settings
         configureAppearance()
         
         // Set up window management
         setupWindowManagement()
+        
+        // Create initial window
+        createInitialWindow()
     }
     
     func applicationWillTerminate(_ notification: Notification) {
@@ -16,19 +25,46 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     }
     
     func applicationShouldTerminateAfterLastWindowClosed(_ sender: NSApplication) -> Bool {
+        return false // We handle window creation manually
+    }
+    
+    func applicationSupportsSecureRestorableState(_ app: NSApplication) -> Bool {
         return true
     }
     
-    // MARK: - Private Methods
+    // MARK: - Window Management
+    
+    private func createInitialWindow() {
+        WindowManager.shared.createNewWindow()
+    }
+    
+    // MARK: - Configuration
     
     private func configureAppearance() {
         // Allow windows to have full-size content view
         NSWindow.allowsAutomaticWindowTabbing = true
+        
+        // Set activation policy
+        NSApp.setActivationPolicy(.regular)
     }
     
     private func setupWindowManagement() {
         // Configure window restoration
         NSApplication.shared.isAutomaticCustomizeTouchBarMenuItemEnabled = true
+        
+        // Register for window close notifications
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(handleWindowShouldClose(_:)),
+            name: .windowShouldClose,
+            object: nil
+        )
+    }
+    
+    @objc private func handleWindowShouldClose(_ notification: Notification) {
+        if let windowViewModel = notification.object as? WindowViewModel {
+            WindowManager.shared.closeWindow(windowViewModel)
+        }
     }
     
     // MARK: - Menu Actions
@@ -59,5 +95,9 @@ class AppDelegate: NSObject, NSApplicationDelegate {
     
     @objc func resetTerminal(_ sender: Any?) {
         WindowManager.shared.resetTerminal()
+    }
+    
+    @objc func showPreferences(_ sender: Any?) {
+        NSApp.sendAction(Selector(("showSettingsWindow:")), to: nil, from: nil)
     }
 }

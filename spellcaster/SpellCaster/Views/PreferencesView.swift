@@ -6,7 +6,7 @@ struct PreferencesView: View {
     
     var body: some View {
         TabView {
-            GeneralPreferencesView(viewModel: viewModel)
+            GeneralPreferencesView()
                 .tabItem {
                     Label("General", systemImage: "gearshape")
                 }
@@ -21,7 +21,7 @@ struct PreferencesView: View {
                     Label("AI", systemImage: "brain")
                 }
             
-            AdvancedPreferencesView(viewModel: viewModel)
+            AdvancedPreferencesView()
                 .tabItem {
                     Label("Advanced", systemImage: "slider.horizontal.3")
                 }
@@ -33,7 +33,6 @@ struct PreferencesView: View {
 // MARK: - General Preferences
 
 struct GeneralPreferencesView: View {
-    @ObservedObject var viewModel: PreferencesViewModel
     @AppStorage("defaultShell") private var defaultShell: String = "/bin/zsh"
     @AppStorage("appearance") private var appearance: String = "system"
     @AppStorage("restoreSession") private var restoreSession: Bool = true
@@ -49,10 +48,6 @@ struct GeneralPreferencesView: View {
                     Text("zsh (/bin/zsh)").tag("/bin/zsh")
                     Text("bash (/bin/bash)").tag("/bin/bash")
                     Text("fish (/usr/local/bin/fish)").tag("/usr/local/bin/fish")
-                }
-                
-                Button("Open Terminal Preferences...") {
-                    NSWorkspace.shared.open(URL(string: "x-apple.systempreferences:com.apple.preferences.shell")!)
                 }
             }
             
@@ -73,7 +68,6 @@ struct GeneralPreferencesView: View {
 struct ProfilesPreferencesView: View {
     @ObservedObject var viewModel: PreferencesViewModel
     @State private var selectedProfileID: UUID?
-    @State private var isEditingProfile: Bool = false
     
     var body: some View {
         HSplitView {
@@ -81,8 +75,20 @@ struct ProfilesPreferencesView: View {
             VStack(alignment: .leading, spacing: 0) {
                 List(selection: $selectedProfileID) {
                     ForEach(viewModel.profiles) { profile in
-                        ProfileRowView(profile: profile, isSelected: selectedProfileID == profile.id)
-                            .tag(profile.id)
+                        HStack {
+                            Circle()
+                                .fill(Color.accentColor)
+                                .frame(width: 8, height: 8)
+                            
+                            VStack(alignment: .leading) {
+                                Text(profile.name)
+                                    .font(.body)
+                                Text(profile.shellPath)
+                                    .font(.caption)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                        .tag(profile.id)
                     }
                     .onDelete(perform: deleteProfile)
                 }
@@ -95,15 +101,10 @@ struct ProfilesPreferencesView: View {
                         Image(systemName: "plus")
                     }
                     
-                    Button(action: duplicateProfile) {
+                    Button(action: { selectedProfileID = nil }) {
                         Image(systemName: "doc.on.doc")
                     }
-                    .disabled(selectedProfile == nil)
-                    
-                    Button(action: { isEditingProfile = true }) {
-                        Image(systemName: "pencil")
-                    }
-                    .disabled(selectedProfile == nil)
+                    .disabled(selectedProfileID == nil)
                     
                     Spacer()
                 }
@@ -112,8 +113,9 @@ struct ProfilesPreferencesView: View {
             .frame(width: 200)
             
             // Profile editor
-            if let profile = selectedProfile {
-                ProfileEditorView(profile: profile, viewModel: viewModel)
+            if let id = selectedProfileID,
+               let profile = viewModel.profiles.first(where: { $0.id == id }) {
+                SimpleProfileEditor(profile: profile, viewModel: viewModel)
             } else {
                 VStack {
                     Text("Select a profile")
@@ -134,15 +136,6 @@ struct ProfilesPreferencesView: View {
         selectedProfileID = newProfile.id
     }
     
-    func duplicateProfile() {
-        guard let profile = selectedProfile else { return }
-        var newProfile = profile
-        newProfile.id = UUID()
-        newProfile.name = "\(profile.name) Copy"
-        viewModel.saveProfile(newProfile)
-        selectedProfileID = newProfile.id
-    }
-    
     func deleteProfile(at offsets: IndexSet) {
         for index in offsets {
             viewModel.deleteProfile(viewModel.profiles[index])
@@ -150,110 +143,71 @@ struct ProfilesPreferencesView: View {
     }
 }
 
-struct ProfileRowView: View {
+struct SimpleProfileEditor: View {
     let profile: Profile
-    let isSelected: Bool
-    
-    var body: some View {
-        HStack {
-            Circle()
-                .fill(Color.accentColor)
-                .frame(width: 8, height: 8)
-            
-            VStack(alignment: .leading) {
-                Text(profile.name)
-                    .font(.body)
-                Text(profile.shellPath)
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-            }
-        }
-    }
-}
-
-struct ProfileEditorView: View {
-    @Binding var profile: Profile
     let viewModel: PreferencesViewModel
+    
+    @State private var name: String
+    @State private var shellPath: String
+    @State private var fontName: String
+    @State private var fontSize: Double
+    @State private var cursorStyle: CursorStyleSetting
+    @State private var cursorBlink: Bool
+    
+    init(profile: Profile, viewModel: PreferencesViewModel) {
+        self.profile = profile
+        self.viewModel = viewModel
+        self._name = State(initialValue: profile.name)
+        self._shellPath = State(initialValue: profile.shellPath)
+        self._fontName = State(initialValue: profile.fontName)
+        self._fontSize = State(initialValue: profile.fontSize)
+        self._cursorStyle = State(initialValue: profile.cursorStyle)
+        self._cursorBlink = State(initialValue: profile.cursorBlink)
+    }
     
     var body: some View {
         Form {
             Section("Profile") {
-                TextField("Name:", text: $profile.name)
+                TextField("Name:", text: $name)
             }
             
             Section("Shell") {
-                TextField("Command:", text: $profile.shellPath)
-                
-                Toggle("Run command as login shell", isOn: .init(
-                    get: { profile.shellArguments.contains("-l") },
-                    set: { newValue in
-                        if newValue {
-                            profile.shellArguments = ["-l"]
-                        } else {
-                            profile.shellArguments = []
-                        }
-                    }
-                ))
+                TextField("Command:", text: $shellPath)
             }
             
             Section("Text") {
-                Picker("Font:", selection: $profile.fontName) {
+                Picker("Font:", selection: $fontName) {
                     Text("SF Mono").tag("SF Mono")
                     Text("Menlo").tag("Menlo")
                     Text("Monaco").tag("Monaco")
                     Text("Courier New").tag("Courier New")
                 }
                 
-                Stepper("Size: \(Int(profile.fontSize))", value: $profile.fontSize, in: 9...24)
+                Stepper("Size: \(Int(fontSize))", value: $fontSize, in: 9...24)
             }
             
             Section("Cursor") {
-                Picker("Style:", selection: $profile.cursorStyle) {
+                Picker("Style:", selection: $cursorStyle) {
                     Text("Block").tag(CursorStyleSetting.block)
                     Text("Underline").tag(CursorStyleSetting.underline)
                     Text("Bar").tag(CursorStyleSetting.bar)
                 }
                 
-                Toggle("Blinking cursor", isOn: $profile.cursorBlink)
-            }
-            
-            Section("Color Scheme") {
-                ColorSchemeEditorView(colorScheme: $profile.colorScheme)
+                Toggle("Blinking cursor", isOn: $cursorBlink)
             }
             
             Button("Save Changes") {
-                viewModel.saveProfile(profile)
+                var updatedProfile = profile
+                updatedProfile.name = name
+                updatedProfile.shellPath = shellPath
+                updatedProfile.fontName = fontName
+                updatedProfile.fontSize = fontSize
+                updatedProfile.cursorStyle = cursorStyle
+                updatedProfile.cursorBlink = cursorBlink
+                viewModel.saveProfile(updatedProfile)
             }
         }
         .padding()
-    }
-}
-
-struct ColorSchemeEditorView: View {
-    @Binding var colorScheme: ColorScheme
-    
-    let colorNames = ["Black", "Red", "Green", "Yellow", "Blue", "Magenta", "Cyan", "White"]
-    
-    var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Text("Foreground:")
-            ColorPicker("", selection: Binding(
-                get: { Color(nsColor: NSColor(nsColor: colorScheme.foreground.nsColor)) },
-                set: { color in
-                    colorScheme.foreground = RGBColor(nsColor: NSColor(color))
-                }
-            ))
-            .labelsHidden()
-            
-            Text("Background:")
-            ColorPicker("", selection: Binding(
-                get: { Color(nsColor: NSColor(nsColor: colorScheme.background.nsColor)) },
-                set: { color in
-                    colorScheme.background = RGBColor(nsColor: NSColor(color))
-                }
-            ))
-            .labelsHidden()
-        }
     }
 }
 
@@ -317,7 +271,6 @@ struct AIPreferencesView: View {
 // MARK: - Advanced Preferences
 
 struct AdvancedPreferencesView: View {
-    @ObservedObject var viewModel: PreferencesViewModel
     @AppStorage("scrollbackLines") private var scrollbackLines: Int = 10000
     @AppStorage("renderMode") private var renderMode: String = "metal"
     @AppStorage("shellIntegration") private var shellIntegration: Bool = true
@@ -327,8 +280,6 @@ struct AdvancedPreferencesView: View {
         Form {
             Section("Scrollback") {
                 Stepper("Buffer size: \(scrollbackLines) lines", value: $scrollbackLines, in: 1000...100000, step: 1000)
-                
-                Toggle("Unlimited scrollback", isOn: .constant(false))
             }
             
             Section("Rendering") {
@@ -353,12 +304,6 @@ struct AdvancedPreferencesView: View {
                     Text("Info").tag("info")
                     Text("Warning").tag("warning")
                     Text("Error").tag("error")
-                }
-                
-                Button("Open Log File") {
-                    let logURL = FileManager.default.homeDirectoryForCurrentUser
-                        .appendingPathComponent("Library/Logs/SpellCaster/app.log")
-                    NSWorkspace.shared.open(logURL)
                 }
             }
         }

@@ -1,14 +1,38 @@
 import Foundation
 import SwiftUI
+import Combine
 
 /// Window lifecycle management
 class WindowManager: ObservableObject {
+    // MARK: - Singleton
+    
     static let shared = WindowManager()
+    
+    // MARK: - Properties
     
     @Published var windows: [WindowViewModel] = []
     @Published var activeWindowID: UUID?
     
-    private init() {}
+    private var cancellables = Set<AnyCancellable>()
+    
+    // MARK: - Initialization
+    
+    private init() {
+        setupNotifications()
+    }
+    
+    // MARK: - Setup
+    
+    private func setupNotifications() {
+        // Listen for window close notifications
+        NotificationCenter.default.publisher(for: .windowShouldClose)
+            .sink { [weak self] notification in
+                if let window = notification.object as? WindowViewModel {
+                    self?.closeWindow(window)
+                }
+            }
+            .store(in: &cancellables)
+    }
     
     // MARK: - Window Management
     
@@ -33,25 +57,31 @@ class WindowManager: ObservableObject {
     
     var activeWindow: WindowViewModel? {
         guard let id = activeWindowID else { return windows.first }
-        return windows.first(where: { $0.id == id })
+        return windows.first(where: { $0.id == id }) ?? windows.first
     }
     
     // MARK: - Tab Management
     
     func createNewTab() {
-        activeWindow?.createPane()
+        if let window = activeWindow {
+            window.createPane()
+        } else {
+            createNewWindow()
+        }
     }
     
     // MARK: - Split Pane Management
     
     func splitPaneHorizontally() {
-        // TODO: Implement split pane logic
-        activeWindow?.createPane()
+        if let window = activeWindow {
+            window.splitPaneHorizontally()
+        }
     }
     
     func splitPaneVertically() {
-        // TODO: Implement split pane logic
-        activeWindow?.createPane()
+        if let window = activeWindow {
+            window.splitPaneVertically()
+        }
     }
     
     // MARK: - Sidebar Management

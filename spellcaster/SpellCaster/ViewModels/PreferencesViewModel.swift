@@ -24,6 +24,12 @@ class PreferencesViewModel: ObservableObject {
     
     func loadProfiles() {
         profiles = profileManager.loadProfiles()
+        if profiles.isEmpty {
+            // Create default profile if none exist
+            let defaultProfile = Profile.default
+            profileManager.saveProfile(defaultProfile)
+            profiles = [defaultProfile]
+        }
         if selectedProfile == nil {
             selectedProfile = profiles.first
         }
@@ -32,11 +38,21 @@ class PreferencesViewModel: ObservableObject {
     func saveProfile(_ profile: Profile) {
         profileManager.saveProfile(profile)
         loadProfiles()
+        
+        // Update selected profile if it was modified
+        if selectedProfile?.id == profile.id {
+            selectedProfile = profile
+        }
     }
     
     func deleteProfile(_ profile: Profile) {
         profileManager.deleteProfile(profile)
         loadProfiles()
+        
+        // Clear selection if deleted profile was selected
+        if selectedProfile?.id == profile.id {
+            selectedProfile = profiles.first
+        }
     }
     
     func duplicateProfile(_ profile: Profile) {

@@ -99,9 +99,8 @@ struct TabItemView: View {
             return url.lastPathComponent
         }
         
-        // Fallback to shell type
-        let shellPath = pane.terminalState.shellIntegration?.shellType?.rawValue ?? "Shell"
-        return shellPath.capitalized
+        // Fallback to default title
+        return "Terminal"
     }
 }
 

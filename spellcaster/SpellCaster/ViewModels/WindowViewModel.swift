@@ -32,6 +32,35 @@ class WindowViewModel: ObservableObject, Identifiable {
         
         // Create initial pane
         createPane()
+        
+        // Listen for pane exit notifications
+        setupNotifications()
+    }
+    
+    // MARK: - Setup
+    
+    private func setupNotifications() {
+        NotificationCenter.default.publisher(for: .paneDidExit)
+            .sink { [weak self] notification in
+                if let pane = notification.object as? PaneViewModel {
+                    self?.handlePaneExit(pane: pane, exitCode: notification.userInfo?["exitCode"] as? Int32 ?? 0)
+                }
+            }
+            .store(in: &cancellables)
+        
+        NotificationCenter.default.publisher(for: .windowShouldClose)
+            .sink { [weak self] notification in
+                if let window = notification.object as? WindowViewModel, window.id == self?.id {
+                    // Handle window close request
+                }
+            }
+            .store(in: &cancellables)
+    }
+    
+    private func handlePaneExit(pane: PaneViewModel, exitCode: Int32) {
+        if profile.closeOnExit {
+            closePane(pane)
+        }
     }
     
     // MARK: - Pane Management
@@ -40,12 +69,16 @@ class WindowViewModel: ObservableObject, Identifiable {
     func createPane() -> PaneViewModel {
         let pane = PaneViewModel(profile: profile)
         panes.append(pane)
-        activePaneID = pane.id
+        setActivePane(pane)
         
         // Launch the shell
         try? pane.launch()
         
         return pane
+    }
+    
+    func addPane() {
+        createPane()
     }
     
     func closePane(_ pane: PaneViewModel) {
@@ -57,6 +90,10 @@ class WindowViewModel: ObservableObject, Identifiable {
             activePaneID = panes.first?.id
         }
         
+        // Mark remaining panes as inactive
+        panes.forEach { $0.isActive = false }
+        activePane?.isActive = true
+        
         // Close window if no panes left
         if panes.isEmpty {
             NotificationCenter.default.post(
@@ -66,9 +103,37 @@ class WindowViewModel: ObservableObject, Identifiable {
         }
     }
     
+    func removePane(id: UUID) {
+        if let pane = panes.first(where: { $0.id == id }) {
+            closePane(pane)
+        }
+    }
+    
     func setActivePane(_ pane: PaneViewModel) {
         activePaneID = pane.id
         panes.forEach { $0.isActive = ($0.id == pane.id) }
+    }
+    
+    func setActivePane(id: UUID) {
+        if let pane = panes.first(where: { $0.id == id }) {
+            setActivePane(pane)
+        }
+    }
+    
+    // MARK: - Split Pane Management
+    
+    func splitPane(direction: SplitDirection) {
+        // For MVP, just create a new pane
+        // Future: Implement actual split view
+        createPane()
+    }
+    
+    func splitPaneHorizontally() {
+        createPane()
+    }
+    
+    func splitPaneVertically() {
+        createPane()
     }
     
     // MARK: - Sidebar Management
@@ -93,6 +158,17 @@ class WindowViewModel: ObservableObject, Identifiable {
         panes.forEach { $0.terminate() }
         panes.removeAll()
     }
+    
+    deinit {
+        cleanup()
+    }
+}
+
+// MARK: - Split Direction
+
+enum SplitDirection {
+    case horizontal
+    case vertical
 }
 
 // MARK: - Notifications
