@@ -1,64 +1,81 @@
 import SwiftUI
 
-/// Main window layout (terminal + sidebar)
+/// Main window layout with tab bar, terminal area, and AI sidebar
 struct MainWindowView: View {
     @StateObject private var windowViewModel = WindowViewModel()
     
     var body: some View {
-        HSplitView {
-            // Terminal area
-            TerminalPaneView(paneViewModel: windowViewModel.activePane ?? windowViewModel.panes.first!)
-                .frame(minWidth: 400)
+        VStack(spacing: 0) {
+            // Tab bar at the top
+            TabBarView(windowViewModel: windowViewModel)
             
-            // AI Sidebar (toggleable)
-            if windowViewModel.sidebarVisible {
-                AISidebarView(
-                    session: windowViewModel.aiSession,
-                    paneViewModel: windowViewModel.activePane ?? windowViewModel.panes.first!
-                )
-                .frame(width: 350)
+            Divider()
+            
+            // Main content area
+            HSplitView {
+                // Terminal area
+                SplitPaneView(windowViewModel: windowViewModel)
+                    .frame(minWidth: 400)
+                
+                // AI Sidebar (toggleable)
+                if windowViewModel.sidebarVisible {
+                    if let activePane = windowViewModel.activePane {
+                        AISidebarView(
+                            session: windowViewModel.aiSession,
+                            paneViewModel: activePane
+                        )
+                        .frame(minWidth: 300, idealWidth: 350, maxWidth: 500)
+                        .transition(.move(edge: .trailing))
+                    }
+                }
             }
         }
         .frame(minWidth: 800, minHeight: 600)
+        .toolbar {
+            ToolbarItemGroup(placement: .automatic) {
+                // New Tab button
+                Button(action: {
+                    windowViewModel.createPane()
+                }) {
+                    Label("New Tab", systemImage: "plus")
+                }
+                .help("New Tab (⌘T)")
+                
+                Divider()
+                
+                // Split buttons
+                Button(action: {
+                    windowViewModel.createPane()
+                }) {
+                    Label("Split Horizontal", systemImage: "rectangle.split.2x1")
+                }
+                .help("Split Horizontally (⌘D)")
+                
+                Button(action: {
+                    windowViewModel.createPane()
+                }) {
+                    Label("Split Vertical", systemImage: "rectangle.split.1x2")
+                }
+                .help("Split Vertically (⌘⇧D)")
+                
+                Divider()
+                
+                // Toggle sidebar button
+                Button(action: {
+                    withAnimation {
+                        windowViewModel.toggleSidebar()
+                    }
+                }) {
+                    Label("Toggle AI Sidebar", systemImage: windowViewModel.sidebarVisible ? "sidebar.right" : "sidebar.left")
+                }
+                .help("Toggle AI Sidebar (⌘⇧B)")
+            }
+        }
+        .environmentObject(windowViewModel)
     }
 }
 
-/// Terminal pane view wrapping NSView
-struct TerminalPaneView: NSViewRepresentable {
-    let paneViewModel: PaneViewModel
-    
-    func makeNSView(context: Context) -> TerminalView {
-        let profile = ProfileManager.shared.getDefaultProfile()
-        let terminalView = TerminalView(state: paneViewModel.terminalState, profile: profile)
-        
-        terminalView.onKeyEvent = { event in
-            if let data = TerminalInput.encode(
-                event: event,
-                applicationCursorKeys: paneViewModel.terminalState.applicationCursorKeys,
-                applicationKeypad: paneViewModel.terminalState.applicationKeypad
-            ) {
-                try? paneViewModel.sendInput(data)
-            }
-        }
-        
-        terminalView.onResize = { rows, columns in
-            try? paneViewModel.resize(rows: rows, columns: columns)
-        }
-        
-        terminalView.onPaste = { text in
-            if paneViewModel.terminalState.bracketedPaste {
-                if let data = TerminalInput.encodeBracketedPaste(text) {
-                    try? paneViewModel.sendInput(data)
-                }
-            } else {
-                try? paneViewModel.sendInput(text)
-            }
-        }
-        
-        return terminalView
-    }
-    
-    func updateNSView(_ nsView: TerminalView, context: Context) {
-        // Update view if needed
-    }
+#Preview {
+    MainWindowView()
+        .frame(width: 1200, height: 800)
 }
